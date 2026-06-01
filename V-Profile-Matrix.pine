@@ -1,44 +1,82 @@
+// © 2026 Vito Santarsiero | AI-assisted optimization
+
 //@version=5
-// © VitoSantarsiero | Volume Profile Matrix
-indicator('Volume Profile Matrix', shorttitle='V-Profile HD', overlay=true, max_boxes_count=500, max_bars_back=5000, max_lines_count=500)
+indicator('Volume Profile Matrix', shorttitle='V-Profile Matrix', overlay=true, max_boxes_count=500, max_bars_back=5000, max_lines_count=500)
 
 G_CORE    = "VOLUME DISTRIBUTION ANALYSIS"
-cleanChartDWM = input.bool(true, "Clean Chart on 1D or Above (POC/FVG Only)", group=G_CORE)
-showHighVolLevels = input.bool(true, "Enable VA & HVN Levels", group=G_CORE)
-tfInput   = input.string("1 day", "Anchor Timeframe", options=["4h","1 day","1 week","1 month","3 months","6 months","12 months"], group=G_CORE, tooltip="Defines the historical lookback period for volume calculation. Data is gathered from lower timeframes to build the profile within this specific window.")
-bin_res   = input.int(100, "Row Resolution (Bins)", minval=20, maxval=500, step=10, group=G_CORE, tooltip="Determines vertical price granularity. \n\nRecommended Setups:\n- Scalping: 50-80 bins (High speed)\n- Intraday: 100-200 bins (Optimal balance)\n- Swing: 200-400 bins (High precision)\n- Macro: 400+ bins (Maximum detail)")
-vaCol     = input.color(color.new(#ff9800, 84), "Value Area Color", group=G_CORE)
-pocCol     = input.color(color.new(#2962ff, 0), "POC Color", group=G_CORE)
+showProfileOnly = input.bool(true, "Enable Profile Visualization", group=G_CORE)
+tfInput   = input.string("1 day", "Anchor Timeframe", options=["4h","1 day","1 week","1 month","3 months","6 months","12 months"], group=G_CORE, tooltip="Defines the historical lookback period for volume calculation.")
+bin_res   = input.int(100, "Row Resolution (Bins)", minval=20, maxval=500, step=10, group=G_CORE, tooltip="Determines vertical price granularity.")
+vaCol     = input.color(color.new(#2962ff, 95), "Value Area Color", group=G_CORE)
+pocCol    = input.color(color.new(#2962ff, 0), "POC Color", group=G_CORE)
 
-G_FLOW    = "LIQUIDITY & MARKET INEFFICIENCIES"
+G_FLOW    = "LIQUIDITY & MARKET INEFFICIENCIES CONTEXT"
+showLVN_HVN   = input.bool(true, "Enable LVN/HVN Visualization", group=G_FLOW)
 showFVGGlobal = input.bool(true, "Enable Fair Value Gap (FVG)", group=G_FLOW)
-atrMult       = input.float(0.8, "FVG Filter (ATR)", step=0.1, group=G_FLOW, tooltip="Filter for FVG detection based on volatility. Higher values (1.0+) filter out small gaps, focusing only on significant liquidity imbalances. Lower values (0.5-0.7) capture more aggressive market moves.")
+atrMult       = input.float(0.8, "FVG (ATR Filter)", step=0.1, group=G_FLOW, tooltip="Filter for FVG detection based on volatility.")
 lvnCol         = input.color(color.new(#9c27b0, 80), "Low Volume Imbalance Color", group=G_FLOW)
 hvnCol_fvg    = input.color(color.new(#e65100, 80), "High Volume Imbalance Color", group=G_FLOW)
 
-float denThr = 0.25 
-bool isHighTF = cleanChartDWM and timeframe.isdwm
-
-var float[] global_vp = array.new_float(bin_res, 0.0)
-var float global_maxV = 0.0, var float global_maxH = 0.0, var float global_minL = 0.0
-
 type FVG_Data
     box id
+    box powerBox
+    label scoreLabel
     float limit
     bool isBull
 
+var float[] global_vp = array.new_float(bin_res, 0.0)
+var float global_maxV = 0.0, var float global_maxH = 0.0, var float global_minL = 0.0
 var active_fvgs     = array.new<FVG_Data>()
 var int zoneStart   = time
 var float sHigh     = na, var float sLow = na
 var float[] ltfH    = array.new_float(0), var float[] ltfL = array.new_float(0), var float[] ltfV = array.new_float(0)
 var polyline cProf  = na, var line cPoc = na, var line cSPoc = na, var line[] cVAs = array.new_line(0)
 
+tfToMinutes(string tf) =>
+    switch tf
+        "4h"        => 240
+        "1 day"     => 1440
+        "1 week"    => 10080
+        "1 month"   => 43200
+        "3 months"  => 129600
+        "6 months"  => 259200
+        "12 months" => 518400
+        => 1440
+
+currentTfMinutes = timeframe.isminutes ? timeframe.multiplier : 
+                   timeframe.isdaily ? timeframe.multiplier * 1440 : 
+                   timeframe.isweekly ? timeframe.multiplier * 10080 : 
+                   timeframe.ismonthly ? timeframe.multiplier * 43200 : 1440
+anchorTfMinutes  = tfToMinutes(tfInput)
+
+hideProfileElements = currentTfMinutes >= anchorTfMinutes
+
+calculate_power(float mid_price, float fvg_size, float atr) =>
+    int score = 1
+    float core_t = mid_price, float core_b = mid_price
+    if array.size(global_vp) > 4 and global_maxH > global_minL
+        float bSiz = (global_maxH - global_minL) / bin_res
+        idx = int((global_maxH - mid_price) / math.max(syminfo.mintick, bSiz))
+        idx := math.max(2, math.min(bin_res - 3, idx))
+        float v_at_p = array.get(global_vp, idx)
+        float avg_v  = array.sum(global_vp) / bin_res
+        float vacuum_factor = math.max(0, 1.0 - (v_at_p / math.max(syminfo.mintick, avg_v)))
+        float v_above = (array.get(global_vp, idx - 1) + array.get(global_vp, idx - 2)) / 2
+        float v_below = (array.get(global_vp, idx + 1) + array.get(global_vp, idx + 2)) / 2
+        float max_adjacent = math.max(v_above, v_below)
+        float gradient_factor = max_adjacent / math.max(syminfo.mintick, v_at_p)
+        float kinetic_factor = fvg_size / math.max(syminfo.mintick, atr)
+        float raw_score = (gradient_factor * 0.50) + (vacuum_factor * 3.0) + (kinetic_factor * 0.20)
+        score := math.max(1, math.min(5, int(math.round(raw_score))))
+        core_t := global_maxH - (idx * bSiz)
+        core_b := core_t - bSiz
+    [score, core_t, core_b]
+
 renderProfile(int _sT, int _eT, float _mH, float _mL) =>
     polyline _rP = na, line _rL = na, line _rSL = na, line[] _rV = array.new_line(0)
     float _range   = math.max(syminfo.mintick, _mH - _mL)
     float _binSize = _range / bin_res
     float[] _tmpVP = array.new_float(bin_res, 0.0)
-    
     if array.size(ltfV) > 0
         for j = 0 to array.size(ltfV) - 1
             vH = array.get(ltfH, j), vL = array.get(ltfL, j), vV = array.get(ltfV, j)
@@ -48,23 +86,20 @@ renderProfile(int _sT, int _eT, float _mH, float _mL) =>
                 intersect = math.max(0, math.min(vH, bT) - math.max(vL, bB))
                 if intersect > 0 
                     array.set(_tmpVP, i, array.get(_tmpVP, i) + (vV * (intersect / vR)))
-    
     float _maxV = array.max(_tmpVP), float _totV = array.sum(_tmpVP)
     int pIdx = (_maxV > 0) ? array.indexof(_tmpVP, _maxV) : 0
     float _maxV2 = 0.0, int sIdx = 0
     int minDistanceBins = int(bin_res * 0.25)
-    
-    if _maxV > 0 and showHighVolLevels
+    if _maxV > 0 and showLVN_HVN
         for i = 0 to bin_res - 1
             if math.abs(i - pIdx) >= minDistanceBins
                 val = array.get(_tmpVP, i)
                 if val > _maxV2
                     _maxV2 := val
                     sIdx := i
-
     if _maxV > 0
-        if not isHighTF
-            int pW = int((_eT - _sT) * 0.25)
+        int pW = int((_eT - _sT) * 0.25)
+        if showProfileOnly and not hideProfileElements
             pts = array.new<chart.point>()
             array.push(pts, chart.point.from_time(_sT, _mL))
             for i = bin_res - 1 to 0
@@ -72,7 +107,6 @@ renderProfile(int _sT, int _eT, float _mH, float _mL) =>
                 array.push(pts, chart.point.from_time(math.max(_sT, xC), _mH - (i * _binSize) - (_binSize / 2)))
             array.push(pts, chart.point.from_time(_sT, _mH))
             _rP := polyline.new(pts, false, true, xloc.bar_time, color.new(pocCol, 100), color.new(pocCol, 65))
-        
         float g70 = _totV * 0.70, curV = _maxV
         int u = pIdx, d = pIdx
         while curV < g70 and (u > 0 or d < bin_res - 1)
@@ -86,28 +120,35 @@ renderProfile(int _sT, int _eT, float _mH, float _mL) =>
                 d += 1
             else
                 break
-        
-        if showHighVolLevels and not isHighTF
+        if not hideProfileElements
             lt = line.new(_sT, _mH - (u * _binSize), _eT, _mH - (u * _binSize), color=na, xloc=xloc.bar_time)
             lb = line.new(_sT, _mH - (d * _binSize) - _binSize, _eT, _mH - (d * _binSize) - _binSize, color=na, xloc=xloc.bar_time)
             linefill.new(lt, lb, vaCol), array.push(_rV, lt), array.push(_rV, lb)
-        
+            
         _rL := line.new(_sT, _mH - (pIdx * _binSize) - (_binSize/2), _eT, _mH - (pIdx * _binSize) - (_binSize/2), xloc=xloc.bar_time, color=pocCol, width=2)
         
-        if showHighVolLevels and _maxV2 > 0 and not isHighTF
+        if showLVN_HVN and _maxV2 > 0 and not hideProfileElements
             _rSL := line.new(_sT, _mH - (sIdx * _binSize) - (_binSize/2), _eT, _mH - (sIdx * _binSize) - (_binSize/2), xloc=xloc.bar_time, color=pocCol, width=1, style=line.style_dashed)
-            
     [_rP, _rL, _rSL, _rV, _maxV, _mH, _mL, _tmpVP]
 
 ltf_res = timeframe.isintraday ? (timeframe.multiplier <= 15 ? "1" : "5") : (timeframe.isdaily ? "15" : "60")
 s_type  = tfInput == "4h" ? "240" : tfInput == "1 week" ? "W" : tfInput == "1 month" ? "M" : tfInput == "3 months" ? "3M" : tfInput == "6 months" ? "6M" : tfInput == "12 months" ? "12M" : "D"
-
 [dH, dL, dV, dC] = request.security_lower_tf(syminfo.tickerid, ltf_res, [high, low, volume, close])
+
+polyline p_out = na
+line l_out = na
+line sl_out = na
+line[] vls_out = na
+float mv_out = na
+float mh_out = na
+float ml_out = na
+float[] tvp_out = na
 
 if ta.change(time(s_type)) != 0
     if array.size(ltfV) > 0 
         [p, l, sl, vls, mv, mh, ml, tvp] = renderProfile(zoneStart, time, sHigh, sLow)
-        global_maxV := mv, global_maxH := mh, global_minL := ml, global_vp := tvp
+        p_out := p, l_out := l, sl_out := sl, vls_out := vls, mv_out := mv, mh_out := mh, ml_out := ml, tvp_out := tvp
+        global_maxV := mv_out, global_maxH := mh_out, global_minL := ml_out, global_vp := tvp_out
     zoneStart := time, sHigh := high, sLow := low, array.clear(ltfH), array.clear(ltfL), array.clear(ltfV)
 else
     sHigh := math.max(nz(sHigh, high), high), sLow := math.min(nz(sLow, low), low)
@@ -119,30 +160,41 @@ if array.size(dV) > 0
 if showFVGGlobal
     bSiz = (global_maxH - global_minL) / bin_res
     atr  = ta.atr(14)
+    denThr = 0.25
     if (low[0] > high[2]) and (low[0] - high[2] > atr * atrMult)
-        idx = int((global_maxH - ((low[0] + high[2])/2)) / math.max(syminfo.mintick, bSiz))
+        mid_lvn = (low[0] + high[2]) / 2
+        idx = int((global_maxH - mid_lvn) / math.max(syminfo.mintick, bSiz))
         bV  = array.size(global_vp) > 0 and idx >= 0 and idx < bin_res ? array.get(global_vp, idx) : 0.0
         bool isLVN = bV < (global_maxV * denThr)
-        array.push(active_fvgs, FVG_Data.new(box.new(bar_index[2], high[2], bar_index, low[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right), high[2], true))
-    
+        float fvg_range = low[0] - high[2]
+        [pScore, cT, cB] = calculate_power(mid_lvn, fvg_range, atr)
+        box_id   = box.new(bar_index[2], high[2], bar_index, low[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right)
+        p_box    = (showLVN_HVN and isLVN) ? box.new(bar_index[2], cT, bar_index, cB, border_color=na, bgcolor=lvnCol, extend=extend.right) : na
+        label_id = isLVN ? label.new(bar_index + 5, mid_lvn, text=str.tostring(pScore), color=color.new(color.white, 100), textcolor=color.black, style=label.style_label_center, size=size.normal) : na
+        array.push(active_fvgs, FVG_Data.new(box_id, p_box, label_id, high[2], true))
     if (high[0] < low[2]) and (low[2] - high[0] > atr * atrMult)
-        idx = int((global_maxH - ((high[0] + low[2])/2)) / math.max(syminfo.mintick, bSiz))
+        mid_lvn = (high[0] + low[2]) / 2
+        idx = int((global_maxH - mid_lvn) / math.max(syminfo.mintick, bSiz))
         bV  = array.size(global_vp) > 0 and idx >= 0 and idx < bin_res ? array.get(global_vp, idx) : 0.0
         bool isLVN = bV < (global_maxV * denThr)
-        array.push(active_fvgs, FVG_Data.new(box.new(bar_index[2], low[2], bar_index, high[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right), low[2], false))
-
+        float fvg_range = low[2] - high[0]
+        [pScore, cT, cB] = calculate_power(mid_lvn, fvg_range, atr)
+        box_id   = box.new(bar_index[2], low[2], bar_index, high[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right)
+        p_box    = (showLVN_HVN and isLVN) ? box.new(bar_index[2], cT, bar_index, cB, border_color=na, bgcolor=lvnCol, extend=extend.right) : na
+        label_id = isLVN ? label.new(bar_index + 5, mid_lvn, text=str.tostring(pScore), color=color.new(color.white, 100), textcolor=color.black, style=label.style_label_center, size=size.normal) : na
+        array.push(active_fvgs, FVG_Data.new(box_id, p_box, label_id, low[2], false))
     if array.size(active_fvgs) > 0
         for i = array.size(active_fvgs) - 1 to 0
             fvg = array.get(active_fvgs, i)
             if (fvg.isBull ? low < fvg.limit : high > fvg.limit) 
-                box.delete(fvg.id), array.remove(active_fvgs, i)
+                box.delete(fvg.id), box.delete(fvg.powerBox), label.delete(fvg.scoreLabel)
+                array.remove(active_fvgs, i)
             else 
                 box.set_right(fvg.id, bar_index)
-else
-    if array.size(active_fvgs) > 0
-        for i = 0 to array.size(active_fvgs) - 1
-            box.delete(array.get(active_fvgs, i).id)
-        array.clear(active_fvgs)
+                if not na(fvg.powerBox) 
+                    box.set_right(fvg.powerBox, bar_index)
+                if not na(fvg.scoreLabel) 
+                    label.set_x(fvg.scoreLabel, bar_index + 5)
 
 if barstate.islast and array.size(ltfV) > 0
     polyline.delete(cProf), line.delete(cPoc), line.delete(cSPoc)
@@ -150,4 +202,5 @@ if barstate.islast and array.size(ltfV) > 0
         line.delete(l)
     array.clear(cVAs)
     [p, l, sl, vls, mv, mh, ml, tvp] = renderProfile(zoneStart, time_close, sHigh, sLow)
-    cProf := p, cPoc := l, cSPoc := sl, cVAs := vls, global_maxV := mv, global_maxH := mh, global_minL := ml, global_vp := tvp
+    p_out := p, l_out := l, sl_out := sl, vls_out := vls, mv_out := mv, mh_out := mh, ml_out := ml, tvp_out := tvp
+    cProf := p_out, cPoc := l_out, cSPoc := sl_out, cVAs := vls_out, global_maxV := mv_out, global_maxH := mh_out, global_minL := ml_out, global_vp := tvp_out

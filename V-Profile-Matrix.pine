@@ -1,206 +1,414 @@
-// © 2026 Vito Santarsiero | AI-assisted optimization
+// © 2026 Vito Santarsiero | https://www.linkedin.com/in/vito-santarsiero
+//@version=6
 
-//@version=5
-indicator('Volume Profile Matrix', shorttitle='V-Profile Matrix', overlay=true, max_boxes_count=500, max_bars_back=5000, max_lines_count=500)
+indicator('Volume Profile Matrix v8.9', shorttitle = 'V-Profile Matrix', overlay = true, max_boxes_count = 500, max_bars_back = 5000, max_lines_count = 500)
 
-G_CORE    = "VOLUME DISTRIBUTION ANALYSIS"
-showProfileOnly = input.bool(true, "Enable Profile Visualization", group=G_CORE)
-tfInput   = input.string("1 day", "Anchor Timeframe", options=["4h","1 day","1 week","1 month","3 months","6 months","12 months"], group=G_CORE, tooltip="Defines the historical lookback period for volume calculation.")
-bin_res   = input.int(100, "Row Resolution (Bins)", minval=20, maxval=500, step=10, group=G_CORE, tooltip="Determines vertical price granularity.")
-vaCol     = input.color(color.new(#2962ff, 95), "Value Area Color", group=G_CORE)
-pocCol    = input.color(color.new(#2962ff, 0), "POC Color", group=G_CORE)
+tfInput = input.string('1 day', 'Anchor Timeframe', options = ['4h', '1 day', '1 week', '1 month', '3 months', '6 months', '12 months'])
+bin_res = input.int(24, 'Row Resolution (Bins)', minval = 20, maxval = 500, step = 10)
+pocCol = input.color(color.new(#3179f5, 0), 'Profile Color')
+vaCol = color.new(pocCol, 92)
 
-G_FLOW    = "LIQUIDITY & MARKET INEFFICIENCIES CONTEXT"
-showLVN_HVN   = input.bool(true, "Enable LVN/HVN Visualization", group=G_FLOW)
-showFVGGlobal = input.bool(true, "Enable Fair Value Gap (FVG)", group=G_FLOW)
-atrMult       = input.float(0.8, "FVG (ATR Filter)", step=0.1, group=G_FLOW, tooltip="Filter for FVG detection based on volatility.")
-lvnCol         = input.color(color.new(#9c27b0, 80), "Low Volume Imbalance Color", group=G_FLOW)
-hvnCol_fvg    = input.color(color.new(#e65100, 80), "High Volume Imbalance Color", group=G_FLOW)
+G_FLOW = 'LIQUIDITY CONTEXT & MARKET INEFFICIENCIES'
+atrMult = input.float(0.6, 'FVG Filter (ATR Multiplier)', step = 0.1, group = G_FLOW)
+fvg_lvn_base_color = input.color(color.new(#ffa726, 80), 'FVG Color', group = G_FLOW)
+lvnCol = input.color(color.new(#ab47bc, 80), 'LVN Color', group = G_FLOW)
+
+G_HIST = 'HISTORICAL DISPLAY & GLOBAL CONFIGURATION'
+historyMode = input.string('None', 'Historical Data Display', options = ['None', 'Profile', 'Mitigated LVN'], group = G_HIST)
+showLVN_HVN = input.bool(true, 'Enable (LVN) Low Volume Node', group = G_HIST, tooltip = 'Highlights Low Volume Nodes (LVNs) from the session profile. LVNs mark transitional, low-liquidity price zones prone to high volatility.')
+showFVGGlobal = input.bool(true, 'Enable (FVG) High Edge', group = G_HIST, tooltip = 'Enables ATR-filtered FVG tracking.\n\nHigh-edge gaps generate a structured label [Type]-[Density][Power] (e.g., \'VAC-L5\'):\n\n SUP/RES/VAC: Support/Resistance/Vacuum \n• L/H: Volume density Low (LVN) / High (HVN)\n• 1 to 5: Imbalance kinetic intensity score')
+showFVGLowEdge = input.bool(false, 'Enable (FVG) Standard', group = G_HIST)
 
 type FVG_Data
-    box id
-    box powerBox
-    label scoreLabel
-    float limit
-    bool isBull
+	box id
+	label scoreLabel
+	float limit
+	bool isBull
 
-var float[] global_vp = array.new_float(bin_res, 0.0)
-var float global_maxV = 0.0, var float global_maxH = 0.0, var float global_minL = 0.0
-var active_fvgs     = array.new<FVG_Data>()
-var int zoneStart   = time
-var float sHigh     = na, var float sLow = na
-var float[] ltfH    = array.new_float(0), var float[] ltfL = array.new_float(0), var float[] ltfV = array.new_float(0)
-var polyline cProf  = na, var line cPoc = na, var line cSPoc = na, var line[] cVAs = array.new_line(0)
+type LVN_Standalone
+	box id
+	float top
+	float bottom
+	bool isMitigated
+
+var array<float> global_vp = array.new_float(bin_res, 0.0)
+var float global_maxV = 0.0
+var float global_maxH = 0.0
+var float global_minL = 0.0
+var float global_lvnThreshold = 0.0
+var active_fvgs = array.new<FVG_Data>()
+var active_lvns = array.new<LVN_Standalone>()
+var array<box> historical_lvn_boxes = array.new<box>()
+var int zoneStartBar = bar_index
+var int zoneStartTime = time
+var float sHigh = na
+var float sLow = na
+var array<float> ltfH = array.new_float(0)
+var array<float> ltfL = array.new_float(0)
+var array<float> ltfV = array.new_float(0)
+var polyline cProf = na
+var line cPoc = na
+var array<line> cVAs = array.new_line(0)
+float globalAtr = ta.atr(14)
+const int MAX_ALLOCATION = 120
+const int MAX_ARRAY_SIZE = 4500
+const int MAX_LVN_BINS = 3
+showHistoryElements = historyMode == 'Profile'
+keepMitigatedLVN = historyMode == 'Mitigated LVN'
+fvgUserTrans = color.t(fvg_lvn_base_color)
+lvnUserTrans = color.t(lvnCol)
 
 tfToMinutes(string tf) =>
     switch tf
-        "4h"        => 240
-        "1 day"     => 1440
-        "1 week"    => 10080
-        "1 month"   => 43200
-        "3 months"  => 129600
-        "6 months"  => 259200
-        "12 months" => 518400
+        '4h' => 240
+        '1 day' => 1440
+        '1 week' => 10080
+        '1 month' => 43200
+        '3 months' => 129600
+        '6 months' => 259200
+        '12 months' => 518400
         => 1440
 
-currentTfMinutes = timeframe.isminutes ? timeframe.multiplier : 
-                   timeframe.isdaily ? timeframe.multiplier * 1440 : 
-                   timeframe.isweekly ? timeframe.multiplier * 10080 : 
-                   timeframe.ismonthly ? timeframe.multiplier * 43200 : 1440
-anchorTfMinutes  = tfToMinutes(tfInput)
-
+currentTfMinutes = timeframe.isminutes ? timeframe.multiplier : timeframe.isdaily ? timeframe.multiplier * 1440 : timeframe.isweekly ? timeframe.multiplier * 10080 : timeframe.ismonthly ? timeframe.multiplier * 43200 : 1440
+anchorTfMinutes = tfToMinutes(tfInput)
 hideProfileElements = currentTfMinutes >= anchorTfMinutes
 
 calculate_power(float mid_price, float fvg_size, float atr) =>
     int score = 1
-    float core_t = mid_price, float core_b = mid_price
-    if array.size(global_vp) > 4 and global_maxH > global_minL
-        float bSiz = (global_maxH - global_minL) / bin_res
-        idx = int((global_maxH - mid_price) / math.max(syminfo.mintick, bSiz))
-        idx := math.max(2, math.min(bin_res - 3, idx))
+    float effMaxH = global_maxH > 0.0 ? global_maxH : sHigh
+    float effMinL = global_minL > 0.0 ? global_minL : sLow
+    if array.size(global_vp) == bin_res and global_maxV > 0.0 and effMaxH > effMinL
+        float bSiz = (effMaxH - effMinL) / bin_res
+        int idx = math.floor((effMaxH - mid_price) / math.max(syminfo.mintick, bSiz))
+        idx := math.max(0, math.min(bin_res - 1, idx))
         float v_at_p = array.get(global_vp, idx)
-        float avg_v  = array.sum(global_vp) / bin_res
-        float vacuum_factor = math.max(0, 1.0 - (v_at_p / math.max(syminfo.mintick, avg_v)))
-        float v_above = (array.get(global_vp, idx - 1) + array.get(global_vp, idx - 2)) / 2
-        float v_below = (array.get(global_vp, idx + 1) + array.get(global_vp, idx + 2)) / 2
+        float avg_v = array.sum(global_vp) / bin_res
+        float vacuum_factor = math.max(0.0, 1.0 - v_at_p / math.max(syminfo.mintick, avg_v))
+        int idx_above1 = math.max(0, idx - 1)
+        int idx_above2 = math.max(0, idx - 2)
+        int idx_below1 = math.min(bin_res - 1, idx + 1)
+        int idx_below2 = math.min(bin_res - 1, idx + 2)
+        float v_above = (array.get(global_vp, idx_above1) + array.get(global_vp, idx_above2)) / 2
+        float v_below = (array.get(global_vp, idx_below1) + array.get(global_vp, idx_below2)) / 2
         float max_adjacent = math.max(v_above, v_below)
         float gradient_factor = max_adjacent / math.max(syminfo.mintick, v_at_p)
         float kinetic_factor = fvg_size / math.max(syminfo.mintick, atr)
-        float raw_score = (gradient_factor * 0.50) + (vacuum_factor * 3.0) + (kinetic_factor * 0.20)
+        float raw_score = gradient_factor * 0.50 + vacuum_factor * 3.0 + kinetic_factor * 0.20
         score := math.max(1, math.min(5, int(math.round(raw_score))))
-        core_t := global_maxH - (idx * bSiz)
-        core_b := core_t - bSiz
-    [score, core_t, core_b]
+        score
+    else
+        float kinetic_factor = fvg_size / math.max(syminfo.mintick, atr)
+        score := math.max(1, math.min(5, int(math.round(kinetic_factor * 1.5))))
+        score
+    score
 
-renderProfile(int _sT, int _eT, float _mH, float _mL) =>
-    polyline _rP = na, line _rL = na, line _rSL = na, line[] _rV = array.new_line(0)
-    float _range   = math.max(syminfo.mintick, _mH - _mL)
+renderProfile(int _sBar, int _eBar, float _mH, float _mL) =>
+    polyline _rP = na
+    line _rL = na
+    array<line> _rV = array.new_line(0)
+    float _range = math.max(syminfo.mintick, _mH - _mL)
     float _binSize = _range / bin_res
-    float[] _tmpVP = array.new_float(bin_res, 0.0)
-    if array.size(ltfV) > 0
-        for j = 0 to array.size(ltfV) - 1
-            vH = array.get(ltfH, j), vL = array.get(ltfL, j), vV = array.get(ltfV, j)
-            vR = math.max(syminfo.mintick, vH - vL)
-            for i = 0 to bin_res - 1
-                bT = _mH - (i * _binSize), bB = bT - _binSize
-                intersect = math.max(0, math.min(vH, bT) - math.max(vL, bB))
-                if intersect > 0 
-                    array.set(_tmpVP, i, array.get(_tmpVP, i) + (vV * (intersect / vR)))
-    float _maxV = array.max(_tmpVP), float _totV = array.sum(_tmpVP)
-    int pIdx = (_maxV > 0) ? array.indexof(_tmpVP, _maxV) : 0
-    float _maxV2 = 0.0, int sIdx = 0
-    int minDistanceBins = int(bin_res * 0.25)
-    if _maxV > 0 and showLVN_HVN
-        for i = 0 to bin_res - 1
-            if math.abs(i - pIdx) >= minDistanceBins
-                val = array.get(_tmpVP, i)
-                if val > _maxV2
-                    _maxV2 := val
-                    sIdx := i
+    array<float> _tmpVP = array.new_float(bin_res, 0.0)
+    int ltf_size = array.size(ltfV)
+    if ltf_size > 0
+        for j = 0 to ltf_size - 1 by 1
+            float vH = array.get(ltfH, j)
+            float vL = array.get(ltfL, j)
+            float vV = array.get(ltfV, j)
+            float vR = math.max(syminfo.mintick, vH - vL)
+            int topBin = math.max(0, math.min(bin_res - 1, math.floor((_mH - vH) / _binSize)))
+            int botBin = math.max(0, math.min(bin_res - 1, math.floor((_mH - vL) / _binSize)))
+            for i = topBin to botBin by 1
+                float bT = _mH - i * _binSize
+                float bB = bT - _binSize
+                float intersect = math.max(0, math.min(vH, bT) - math.max(vL, bB))
+                if intersect > 0
+                    array.set(_tmpVP, i, array.get(_tmpVP, i) + vV * (intersect / vR))
+    float _maxV = array.max(_tmpVP)
+    float _totV = array.sum(_tmpVP)
+    int pIdx = _maxV > 0 ? array.indexof(_tmpVP, _maxV) : 0
     if _maxV > 0
-        int pW = int((_eT - _sT) * 0.25)
-        if showProfileOnly and not hideProfileElements
-            pts = array.new<chart.point>()
-            array.push(pts, chart.point.from_time(_sT, _mL))
-            for i = bin_res - 1 to 0
-                xC = _sT + int(pW * (nz(array.get(_tmpVP, i)) / _maxV))
-                array.push(pts, chart.point.from_time(math.max(_sT, xC), _mH - (i * _binSize) - (_binSize / 2)))
-            array.push(pts, chart.point.from_time(_sT, _mH))
-            _rP := polyline.new(pts, false, true, xloc.bar_time, color.new(pocCol, 100), color.new(pocCol, 65))
-        float g70 = _totV * 0.70, curV = _maxV
-        int u = pIdx, d = pIdx
-        while curV < g70 and (u > 0 or d < bin_res - 1)
-            uV = (u > 0) ? array.get(_tmpVP, u - 1) : 0
-            dV = (d < bin_res - 1) ? array.get(_tmpVP, d + 1) : 0
-            if uV >= dV and u > 0 
-                curV += uV
-                u -= 1
-            else if d < bin_res - 1 
-                curV += dV
-                d += 1
+        int pW = math.max(5, int((_eBar - _sBar) * 0.25))
+        if not hideProfileElements
+            var array<chart.point> pts = array.new<chart.point>(0)
+            array.clear(pts)
+            array.push(pts, chart.point.from_index(_sBar, _mL))
+            for i = bin_res - 1 to 0 by 1
+                int xC = _sBar + int(pW * (nz(array.get(_tmpVP, i)) / _maxV))
+                array.push(pts, chart.point.from_index(math.max(_sBar, xC), _mH - i * _binSize - _binSize / 2))
+            array.push(pts, chart.point.from_index(_sBar, _mH))
+            _rP := polyline.new(pts, false, true, xloc.bar_index, color.new(pocCol, 100), color.new(pocCol, 80))
+            _rP
+        float g70 = _totV * 0.70
+        float curV = _maxV
+        int u = pIdx
+        int d = pIdx
+        for k = 0 to bin_res by 1
+            if curV >= g70 or u <= 0 and d >= bin_res - 1
+                break
+            float uV = u > 0 ? array.get(_tmpVP, u - 1) : 0.0
+            float dV = d < bin_res - 1 ? array.get(_tmpVP, d + 1) : 0.0
+            if uV >= dV and u > 0
+                curV := curV + uV
+                u := u - 1
+                u
+            else if d < bin_res - 1
+                curV := curV + dV
+                d := d + 1
+                d
             else
                 break
         if not hideProfileElements
-            lt = line.new(_sT, _mH - (u * _binSize), _eT, _mH - (u * _binSize), color=na, xloc=xloc.bar_time)
-            lb = line.new(_sT, _mH - (d * _binSize) - _binSize, _eT, _mH - (d * _binSize) - _binSize, color=na, xloc=xloc.bar_time)
-            linefill.new(lt, lb, vaCol), array.push(_rV, lt), array.push(_rV, lb)
-            
-        _rL := line.new(_sT, _mH - (pIdx * _binSize) - (_binSize/2), _eT, _mH - (pIdx * _binSize) - (_binSize/2), xloc=xloc.bar_time, color=pocCol, width=2)
-        
-        if showLVN_HVN and _maxV2 > 0 and not hideProfileElements
-            _rSL := line.new(_sT, _mH - (sIdx * _binSize) - (_binSize/2), _eT, _mH - (sIdx * _binSize) - (_binSize/2), xloc=xloc.bar_time, color=pocCol, width=1, style=line.style_dashed)
-    [_rP, _rL, _rSL, _rV, _maxV, _mH, _mL, _tmpVP]
+            line lt = line.new(_sBar, _mH - u * _binSize, _eBar, _mH - u * _binSize, color = na, xloc = xloc.bar_index)
+            line lb = line.new(_sBar, _mH - d * _binSize - _binSize, _eBar, _mH - d * _binSize - _binSize, color = na, xloc = xloc.bar_index)
+            linefill.new(lt, lb, vaCol)
+            array.push(_rV, lt)
+            array.push(_rV, lb)
+        _rL := line.new(_sBar, _mH - pIdx * _binSize - _binSize / 2, _eBar, _mH - pIdx * _binSize - _binSize / 2, xloc = xloc.bar_index, color = pocCol, width = 2)
+        _rL
+    [_rP, _rL, _rV, _maxV, _mH, _mL, _tmpVP]
 
-ltf_res = timeframe.isintraday ? (timeframe.multiplier <= 15 ? "1" : "5") : (timeframe.isdaily ? "15" : "60")
-s_type  = tfInput == "4h" ? "240" : tfInput == "1 week" ? "W" : tfInput == "1 month" ? "M" : tfInput == "3 months" ? "3M" : tfInput == "6 months" ? "6M" : tfInput == "12 months" ? "12M" : "D"
-[dH, dL, dV, dC] = request.security_lower_tf(syminfo.tickerid, ltf_res, [high, low, volume, close])
+ltf_res = timeframe.isintraday ? timeframe.multiplier <= 5 ? '1' : '5' : timeframe.isdaily ? '30' : '240'
+s_type = tfInput == '4h' ? '240' : tfInput == '1 week' ? 'W' : tfInput == '1 month' ? 'M' : tfInput == '3 months' ? '3M' : tfInput == '6 months' ? '6M' : tfInput == '12 months' ? '12M' : 'D'
 
+[dH, dL, dV, dC, dO] = request.security_lower_tf(syminfo.tickerid, ltf_res, [high, low, volume, close, open])
+
+float candleDelta1 = 0.0
+int sub_bars_count = array.size(dV)
+if sub_bars_count > 0
+    for i = 0 to sub_bars_count - 1 by 1
+        float v = nz(array.get(dV, i))
+        float c = array.get(dC, i)
+        float o = array.get(dO, i)
+        if c >= o
+            candleDelta1 := candleDelta1 + v
+            candleDelta1
+        else
+            candleDelta1 := candleDelta1 - v
+            candleDelta1
 polyline p_out = na
 line l_out = na
-line sl_out = na
-line[] vls_out = na
+array<line> vls_out = array.new_line(0)
 float mv_out = na
 float mh_out = na
 float ml_out = na
-float[] tvp_out = na
+array<float> tvp_out = array.new_float(0)
+bool isNewCycle = ta.change(time(s_type)) != 0
 
-if ta.change(time(s_type)) != 0
-    if array.size(ltfV) > 0 
-        [p, l, sl, vls, mv, mh, ml, tvp] = renderProfile(zoneStart, time, sHigh, sLow)
-        p_out := p, l_out := l, sl_out := sl, vls_out := vls, mv_out := mv, mh_out := mh, ml_out := ml, tvp_out := tvp
-        global_maxV := mv_out, global_maxH := mh_out, global_minL := ml_out, global_vp := tvp_out
-    zoneStart := time, sHigh := high, sLow := low, array.clear(ltfH), array.clear(ltfL), array.clear(ltfV)
+if isNewCycle
+    if array.size(ltfV) > 0
+        [p, l, vls, mv, mh, ml, tvp] = renderProfile(zoneStartBar, bar_index, sHigh, sLow)
+        if not showHistoryElements
+            polyline.delete(p)
+            line.delete(l)
+            if array.size(vls) > 0
+                for i = 0 to array.size(vls) - 1 by 1
+                    line.delete(array.get(vls, i))
+        else
+            p_out := p
+            l_out := l
+            vls_out := vls
+            vls_out
+        mv_out := mv
+        mh_out := mh
+        ml_out := ml
+        tvp_out := tvp
+        global_maxV := mv_out
+        global_maxH := mh_out
+        global_minL := ml_out
+        global_vp := tvp_out
+        if global_maxV > 0.0
+            float avgV = array.sum(global_vp) / bin_res
+            global_lvnThreshold := math.min(global_maxV * 0.25, avgV * 0.60)
+            global_lvnThreshold
+        if showLVN_HVN and global_maxV > 0.0
+            float minV = global_maxV
+            int lvnIdx = -1
+            for i = 0 to bin_res - 1 by 1
+                float binVal = array.get(global_vp, i)
+                if binVal < minV and binVal > 0.0
+                    minV := binVal
+                    lvnIdx := i
+                    lvnIdx
+            if lvnIdx != -1 and minV <= global_lvnThreshold
+                float bSiz = (global_maxH - global_minL) / bin_res
+
+                int topBin = lvnIdx
+                int botBin = lvnIdx
+                int expandedCount = 1
+
+                for k = 1 to MAX_LVN_BINS by 1
+                    bool expanded = false
+                    if topBin > 0 and expandedCount < MAX_LVN_BINS
+                        float valAbove = array.get(global_vp, topBin - 1)
+                        if valAbove <= global_lvnThreshold
+                            topBin := topBin - 1
+                            expandedCount := expandedCount + 1
+                            expanded := true
+                            expanded
+                    if botBin < bin_res - 1 and expandedCount < MAX_LVN_BINS
+                        float valBelow = array.get(global_vp, botBin + 1)
+                        if valBelow <= global_lvnThreshold
+                            botBin := botBin + 1
+                            expandedCount := expandedCount + 1
+                            expanded := true
+                            expanded
+                    if not expanded
+                        break
+
+                float lvnTop = global_maxH - topBin * bSiz
+                float lvnBottom = global_maxH - (botBin + 1) * bSiz
+
+                int lvnOriginIndex = zoneStartBar
+                int maxBack = bar_index - zoneStartBar
+                if maxBack >= 0
+                    for k = maxBack to 0 by 1
+                        if high[k] >= lvnBottom and low[k] <= lvnTop
+                            lvnOriginIndex := bar_index - k
+                            break
+
+                box persistentLvn = box.new(lvnOriginIndex, lvnTop, bar_index + 40, lvnBottom, border_color = color.new(lvnCol, math.max(0, lvnUserTrans - 30)), bgcolor = lvnCol, border_width = 1)
+                array.push(active_lvns, LVN_Standalone.new(persistentLvn, lvnTop, lvnBottom, false))
+                array.push(historical_lvn_boxes, persistentLvn)
+                if array.size(historical_lvn_boxes) > MAX_ALLOCATION
+                    box.delete(array.shift(historical_lvn_boxes))
+    zoneStartBar := bar_index
+    zoneStartTime := time
+    sHigh := high
+    sLow := low
+    array.clear(ltfH)
+    array.clear(ltfL)
+    array.clear(ltfV)
 else
-    sHigh := math.max(nz(sHigh, high), high), sLow := math.min(nz(sLow, low), low)
+    sHigh := math.max(nz(sHigh, high), high)
+    sLow := math.min(nz(sLow, low), low)
+    sLow
+int dv_size = array.size(dV)
+if dv_size > 0 and array.size(ltfV) < MAX_ARRAY_SIZE
+    for i = 0 to dv_size - 1 by 1
+        array.push(ltfH, array.get(dH, i))
+        array.push(ltfL, array.get(dL, i))
+        array.push(ltfV, nz(array.get(dV, i)))
 
-if array.size(dV) > 0
-    for i = 0 to array.size(dV) - 1
-        array.push(ltfH, array.get(dH, i)), array.push(ltfL, array.get(dL, i)), array.push(ltfV, nz(array.get(dV, i)))
+int active_lvn_size = array.size(active_lvns)
+if active_lvn_size > 0
+    for i = active_lvn_size - 1 to 0 by 1
+        LVN_Standalone lvn = array.get(active_lvns, i)
+        bool isMitigated = high >= lvn.bottom and low <= lvn.top
+        if isMitigated
+            if keepMitigatedLVN
+                box.set_right(lvn.id, bar_index)
+                box.set_bgcolor(lvn.id, color.new(lvnCol, math.min(100, lvnUserTrans + 6)))
+                box.set_border_color(lvn.id, color.new(lvnCol, math.max(0, lvnUserTrans - 20)))
+                box.set_border_style(lvn.id, line.style_dashed)
+                array.remove(active_lvns, i)
+            else
+                box.delete(lvn.id)
+                array.remove(active_lvns, i)
+        else
+            if not na(lvn.id)
+                box.set_right(lvn.id, bar_index + 40)
 
-if showFVGGlobal
-    bSiz = (global_maxH - global_minL) / bin_res
-    atr  = ta.atr(14)
-    denThr = 0.25
-    if (low[0] > high[2]) and (low[0] - high[2] > atr * atrMult)
-        mid_lvn = (low[0] + high[2]) / 2
-        idx = int((global_maxH - mid_lvn) / math.max(syminfo.mintick, bSiz))
-        bV  = array.size(global_vp) > 0 and idx >= 0 and idx < bin_res ? array.get(global_vp, idx) : 0.0
-        bool isLVN = bV < (global_maxV * denThr)
+if showFVGGlobal or showFVGLowEdge
+    float bSiz = global_maxH > global_minL ? (global_maxH - global_minL) / bin_res : na
+    if low[0] > high[2] and low[0] - high[2] > globalAtr * atrMult
+        float mid_fvg = (low[0] + high[2]) / 2
+        bool isLVN_Zone = false
+        if not na(bSiz) and global_maxV > 0.0 and array.size(global_vp) == bin_res
+            int idx = math.floor((global_maxH - mid_fvg) / math.max(syminfo.mintick, bSiz))
+            idx := math.max(0, math.min(bin_res - 1, idx))
+            float bV = array.get(global_vp, idx)
+            isLVN_Zone := global_lvnThreshold > 0.0 ? bV <= global_lvnThreshold and bV > 0.0 : bV <= global_maxV * 0.25
+            isLVN_Zone
         float fvg_range = low[0] - high[2]
-        [pScore, cT, cB] = calculate_power(mid_lvn, fvg_range, atr)
-        box_id   = box.new(bar_index[2], high[2], bar_index, low[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right)
-        p_box    = (showLVN_HVN and isLVN) ? box.new(bar_index[2], cT, bar_index, cB, border_color=na, bgcolor=lvnCol, extend=extend.right) : na
-        label_id = isLVN ? label.new(bar_index + 5, mid_lvn, text=str.tostring(pScore), color=color.new(color.white, 100), textcolor=color.black, style=label.style_label_center, size=size.normal) : na
-        array.push(active_fvgs, FVG_Data.new(box_id, p_box, label_id, high[2], true))
-    if (high[0] < low[2]) and (low[2] - high[0] > atr * atrMult)
-        mid_lvn = (high[0] + low[2]) / 2
-        idx = int((global_maxH - mid_lvn) / math.max(syminfo.mintick, bSiz))
-        bV  = array.size(global_vp) > 0 and idx >= 0 and idx < bin_res ? array.get(global_vp, idx) : 0.0
-        bool isLVN = bV < (global_maxV * denThr)
+        int pScore = calculate_power(mid_fvg, fvg_range, globalAtr)
+        bool is_high_edge = isLVN_Zone and pScore >= 4
+        bool create_fvg = is_high_edge and showFVGGlobal or not is_high_edge and showFVGLowEdge
+        if create_fvg
+            string densityCode = isLVN_Zone ? 'L' : 'H'
+            string labelType = candleDelta1 > 0 ? 'SUP' : 'VAC'
+            color dynamicBoxColor = is_high_edge ? color.new(fvg_lvn_base_color, math.min(100, fvgUserTrans + 5)) : fvg_lvn_base_color
+            color dynamicBorderColor = is_high_edge ? color.new(fvg_lvn_base_color, math.max(0, fvgUserTrans - 25)) : na
+            box box_id = box.new(bar_index[2], high[2], bar_index + 40, low[0], border_color = dynamicBorderColor, border_width = 1, bgcolor = dynamicBoxColor)
+            if is_high_edge
+                box.set_border_style(box_id, line.style_dashed)
+            string label_text = is_high_edge ? labelType + '-' + densityCode + str.tostring(pScore) : ''
+            label lbl_id = na
+            if is_high_edge
+                lbl_id := label.new(bar_index + 40, mid_fvg, text = label_text, color = color.new(color.black, 100), textcolor = chart.fg_color, style = label.style_label_right, size = size.small)
+                lbl_id
+            array.push(active_fvgs, FVG_Data.new(box_id, lbl_id, high[2], true))
+    if high[0] < low[2] and low[2] - high[0] > globalAtr * atrMult
+        float mid_fvg = (high[0] + low[2]) / 2
+        bool isLVN_Zone = false
+        if not na(bSiz) and global_maxV > 0.0 and array.size(global_vp) == bin_res
+            int idx = math.floor((global_maxH - mid_fvg) / math.max(syminfo.mintick, bSiz))
+            idx := math.max(0, math.min(bin_res - 1, idx))
+            float bV = array.get(global_vp, idx)
+            isLVN_Zone := global_lvnThreshold > 0.0 ? bV <= global_lvnThreshold and bV > 0.0 : bV <= global_maxV * 0.25
+            isLVN_Zone
         float fvg_range = low[2] - high[0]
-        [pScore, cT, cB] = calculate_power(mid_lvn, fvg_range, atr)
-        box_id   = box.new(bar_index[2], low[2], bar_index, high[0], border_color=na, bgcolor=isLVN ? lvnCol : hvnCol_fvg, extend=extend.right)
-        p_box    = (showLVN_HVN and isLVN) ? box.new(bar_index[2], cT, bar_index, cB, border_color=na, bgcolor=lvnCol, extend=extend.right) : na
-        label_id = isLVN ? label.new(bar_index + 5, mid_lvn, text=str.tostring(pScore), color=color.new(color.white, 100), textcolor=color.black, style=label.style_label_center, size=size.normal) : na
-        array.push(active_fvgs, FVG_Data.new(box_id, p_box, label_id, low[2], false))
-    if array.size(active_fvgs) > 0
-        for i = array.size(active_fvgs) - 1 to 0
-            fvg = array.get(active_fvgs, i)
-            if (fvg.isBull ? low < fvg.limit : high > fvg.limit) 
-                box.delete(fvg.id), box.delete(fvg.powerBox), label.delete(fvg.scoreLabel)
-                array.remove(active_fvgs, i)
-            else 
-                box.set_right(fvg.id, bar_index)
-                if not na(fvg.powerBox) 
-                    box.set_right(fvg.powerBox, bar_index)
-                if not na(fvg.scoreLabel) 
-                    label.set_x(fvg.scoreLabel, bar_index + 5)
+        int pScore = calculate_power(mid_fvg, fvg_range, globalAtr)
+        bool is_high_edge = isLVN_Zone and pScore >= 4
+        bool create_fvg = is_high_edge and showFVGGlobal or not is_high_edge and showFVGLowEdge
+        if create_fvg
+            string densityCode = isLVN_Zone ? 'L' : 'H'
+            string labelType = candleDelta1 < 0 ? 'RES' : 'VAC'
+            color dynamicBoxColor = is_high_edge ? color.new(fvg_lvn_base_color, math.min(100, fvgUserTrans + 5)) : fvg_lvn_base_color
+            color dynamicBorderColor = is_high_edge ? color.new(fvg_lvn_base_color, math.max(0, fvgUserTrans - 25)) : na
+            box box_id = box.new(bar_index[2], low[2], bar_index + 40, high[0], border_color = dynamicBorderColor, border_width = 1, bgcolor = dynamicBoxColor)
+            if is_high_edge
+                box.set_border_style(box_id, line.style_dashed)
+            string label_text = is_high_edge ? labelType + '-' + densityCode + str.tostring(pScore) : ''
+            label lbl_id = na
+            if is_high_edge
+                lbl_id := label.new(bar_index + 40, mid_fvg, text = label_text, color = color.new(color.black, 100), textcolor = chart.fg_color, style = label.style_label_right, size = size.small)
+                lbl_id
+            array.push(active_fvgs, FVG_Data.new(box_id, lbl_id, low[2], false))
+
+int active_fvg_size = array.size(active_fvgs)
+if active_fvg_size > 0
+    for i = active_fvg_size - 1 to 0 by 1
+        FVG_Data fvg = array.get(active_fvgs, i)
+        bool isMitigated = fvg.isBull ? low < fvg.limit : high > fvg.limit
+        if isMitigated
+            box.delete(fvg.id)
+            if not na(fvg.scoreLabel)
+                label.delete(fvg.scoreLabel)
+            array.remove(active_fvgs, i)
+        else
+            if not na(fvg.id)
+                box.set_right(fvg.id, bar_index + 40)
+            if not na(fvg.scoreLabel)
+                label.set_x(fvg.scoreLabel, bar_index + 40)
+
+if array.size(active_fvgs) > MAX_ALLOCATION
+    FVG_Data old_fvg = array.shift(active_fvgs)
+    box.delete(old_fvg.id)
+    if not na(old_fvg.scoreLabel)
+        label.delete(old_fvg.scoreLabel)
 
 if barstate.islast and array.size(ltfV) > 0
-    polyline.delete(cProf), line.delete(cPoc), line.delete(cSPoc)
-    for l in cVAs
-        line.delete(l)
+    polyline.delete(cProf)
+    line.delete(cPoc)
+    int cVAs_size = array.size(cVAs)
+    if cVAs_size > 0
+        for i = 0 to cVAs_size - 1 by 1
+            line.delete(array.get(cVAs, i))
     array.clear(cVAs)
-    [p, l, sl, vls, mv, mh, ml, tvp] = renderProfile(zoneStart, time_close, sHigh, sLow)
-    p_out := p, l_out := l, sl_out := sl, vls_out := vls, mv_out := mv, mh_out := mh, ml_out := ml, tvp_out := tvp
-    cProf := p_out, cPoc := l_out, cSPoc := sl_out, cVAs := vls_out, global_maxV := mv_out, global_maxH := mh_out, global_minL := ml_out, global_vp := tvp_out
+    [p, l, vls, mv, mh, ml, tvp] = renderProfile(zoneStartBar, bar_index, sHigh, sLow)
+    p_out := p
+    l_out := l
+    vls_out := vls
+    mv_out := mv
+    mh_out := mh
+    ml_out := ml
+    tvp_out := tvp
+    cProf := p_out
+    cPoc := l_out
+    cVAs := vls_out
+    global_maxV := mv_out
+    global_maxH := mh_out
+    global_minL := ml_out
+    global_vp := tvp_out
+    global_vp

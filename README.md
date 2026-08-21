@@ -37,6 +37,7 @@ The indicator combines four analytical layers:
 ## Screenshots
 
 ![V-Profile Overview](DAX_2026-08-21_11-33-16.png)
+![V-Profile Detail](BITCOIN_2026-08-21_11-39-23.png)
 
 ---
 
@@ -69,7 +70,7 @@ V-Profile Matrix works best when combined with the rest of the suite:
 - **[V-Cumulative Delta](https://github.com/VTS92/V-Cumulative-Delta-for-TradingView)** — cumulative volume delta with order-flow regime detection and VWAP divergence
 - **[V-Profile Delta Range](https://github.com/VTS92/V-Profile-Delta-Range-for-TradingView)** — rolling delta profile with institutional Z-score cluster detection
 
-**How they fit together:** V-Session tells you *when* each market was active and how it distributed volume. V-Profile Matrix tells you *where* volume concentrated and rates the strength of each imbalance. V-Cumulative Delta tells you *who* is in control of the order flow. V-Profile Range flags institutional-size clusters as they form, independent of session boundaries.
+**How they fit together:** V-Session tells you *when* each market was active and how it distributed volume. V-Profile Matrix tells you *where* volume is concentrated and rates the strength of each imbalance. V-Cumulative Delta tells you *who* is in control of the order flow. V-Profile Range flags institutional-size clusters as they form, independent of session boundaries.
 
 ---
 

@@ -1,6 +1,8 @@
 # V-Profile Matrix — Volume Profile with Power Score Engine
 
-**Pine Script v5 | TradingView | Institutional Volume Analysis**
+**Pine Script v6 | TradingView | Public Release 2026 — Protected Source Code**
+
+Advanced volume-profile analysis engine combining configurable anchor periods, POC, LVN/HVN and Value Area analysis with ATR-filtered Fair Value Gap detection. Includes liquidity-gap classification, historical profile tracking and LVN mitigation monitoring.
 
 Built and used daily in live trading. Part of the V-Suite — works best combined with the [V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine) and the [V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine).
 
@@ -10,7 +12,7 @@ Built and used daily in live trading. Part of the V-Suite — works best combine
 
 V-Profile Matrix maps where volume concentrates across price levels, then quantifies the strength of every detected price imbalance with a numeric Power Score. It answers two questions: **where were institutions active — and which imbalances are most likely to drive the next move?**
 
-The indicator combines four layers:
+The indicator combines four analytical layers:
 
 **Volume Distribution Analysis**
 - **POC (Point of Control)** — the price level with the highest traded volume. Price tends to return here repeatedly.
@@ -18,22 +20,17 @@ The indicator combines four layers:
 - **HVN (High Volume Nodes)** — areas of heavy institutional activity. Act as strong support and resistance.
 - **LVN (Low Volume Nodes)** — price gaps with little trading activity. Price moves through these rapidly.
 
-**Fair Value Gap (FVG) with Power Score** *(new)*
-- Detects bullish and bearish FVGs filtered by an ATR-based volatility threshold (eliminates noise)
-- Each FVG is classified as **LVN (low-volume imbalance)** or **HVN (high-volume imbalance)** based on the volume density at the gap level
-- **Power Score (1–5)** — quantifies the strength of each LVN imbalance combining three factors:
-  - **Vacuum factor** (primary weight) — how empty the volume profile is at the gap's price
-  - **Gradient factor** — how steep the volume drop is versus adjacent price levels
-  - **Kinetic factor** — gap size relative to ATR (volatility-normalized energy)
-- The score appears as a numeric label next to each LVN, making it instantly clear which imbalances deserve attention
+**Fair Value Gap (FVG) Detection with Power Score**
+- Bullish and bearish FVGs filtered by an ATR-based volatility threshold to eliminate noise
+- Each FVG is classified by liquidity context (Support / Resistance / Vacuum) and by the volume density at the gap level (LVN / HVN)
+- **Power Score (1–5)** — a composite metric combining volume-vacuum intensity, local volume gradient and gap size relative to ATR, surfaced as a structured label (e.g. `VAC-L5`)
 
-**PowerBox — Core Vacuum Zone** *(new)*
-- Inside each LVN, a smaller inner box marks the **single bin with the lowest volume** — the zone where price is most likely to accelerate through
-- Provides a precise execution target inside the wider FVG range
+**Historical Tracking & Mitigation Monitoring**
+- Optional historical display of past volume profiles and Value Areas per anchor period
+- LVN mitigation tracking — monitors when price revisits and fills a previously identified low-liquidity zone
 
-**Adaptive Profile Rendering** *(new)*
-- Profile elements (polyline, Value Area, secondary POC) auto-hide when the chart timeframe meets or exceeds the anchor timeframe — keeping higher-timeframe charts clean while preserving POC and FVG visibility
-- No more manual toggle: the indicator reacts to the chart you're on
+**Adaptive Rendering**
+- Profile elements automatically hide when the chart timeframe meets or exceeds the configured anchor timeframe, keeping higher-timeframe charts clean while preserving POC and FVG visibility
 
 ---
 
@@ -44,36 +41,31 @@ The indicator combines four layers:
 
 ---
 
-## How to use
+## Access
 
-1. Open TradingView and go to **Pine Editor**
-2. Paste the contents of `V-Profile-Matrix.pine`
-3. Click **Add to chart**
-4. Select your **Anchor Timeframe** (recommended: 1 Day for intraday, 1 Week for swing)
-5. Adjust **Row Resolution** based on your trading style:
-   - Scalping: 50–80 bins
-   - Intraday: 100–200 bins
-   - Swing / Macro: 200–400 bins
-6. Watch for **Power Score 4–5** labels on LVN imbalances — those are the highest-conviction setups
+This repository documents the design and functionality of V-Profile Matrix as part of a professional portfolio. The source code is **not distributed in this repository** — the script is published and maintained as a protected (closed-source) invite-only script on TradingView.
+
+For access or a walkthrough of the implementation, please get in touch via [LinkedIn](https://linkedin.com/in/vito-santarsiero).
 
 ---
 
-## Configuration
+## Configuration Overview
 
 | Parameter | Default | Description |
 |---|---|---|
-| Enable Profile Visualization | On | Show the volume profile polyline & Value Area |
-| Enable LVN/HVN Visualization | On | Show secondary POC and inner PowerBox |
-| Enable Fair Value Gap (FVG) | On | Detect and display FVGs with Power Score |
 | Anchor Timeframe | 1 Day | Historical window for volume calculation |
-| Row Resolution | 100 bins | Vertical price granularity |
-| FVG (ATR Filter) | 0.8 | Minimum gap size relative to volatility |
+| Row Size | 24 | Vertical price granularity (bins) |
+| LVN Mode | Enable | Highlights Low Volume Nodes from the session profile |
+| FVG Selector Mode | High Edge | Controls which Fair Value Gaps are displayed and scored |
+| ATR Multiplier | 0.6 | Minimum gap size relative to volatility |
+| Historical Data Display | None | Shows historical profiles or mitigated LVNs |
 
 ---
 
 ## Part of the V-Suite
 
 V-Profile Matrix works best when combined with the rest of the suite:
+
 - **[V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine)** — multi-timezone session mapping with per-session POC, LVN and VWAP
 - **[V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine)** — anchored VWAP with volume shock detection and live volatility dashboard
 
@@ -86,3 +78,7 @@ V-Profile Matrix works best when combined with the rest of the suite:
 **Vito Santarsiero** — Trading Platform Operations Specialist | CISI IOC Candidate | London, UK
 
 [LinkedIn](https://linkedin.com/in/vito-santarsiero) · [V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine) · [V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine)
+
+## License
+
+© 2026 Vito Santarsiero. All rights reserved. See [LICENSE](LICENSE) for details.

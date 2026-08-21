@@ -4,7 +4,7 @@
 
 Advanced volume-profile analysis engine combining configurable anchor periods, POC, LVN/HVN and Value Area analysis with ATR-filtered Fair Value Gap detection. Includes liquidity-gap classification, historical profile tracking and LVN mitigation monitoring.
 
-Built and used daily in live trading. Part of the V-Suite — works best combined with the [V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine) and the [V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine).
+Built and used daily in live trading. Part of the V-Suite — works best combined with the [V-Sessions](https://github.com/VTS92/V-Sessions-for-TradingView), the [V-Cumulative Delta](https://github.com/VTS92/V-Cumulative-Delta-for-TradingView) and the [V-Profile Delta Range](https://github.com/VTS92/V-Profile-Delta-Range-for-TradingView).
 
 ---
 
@@ -36,8 +36,7 @@ The indicator combines four analytical layers:
 
 ## Screenshots
 
-![V-Profile Overview](v-profile-overview.png)
-![V-Profile Detail](v-profile-detail.png)
+*(coming soon — being updated for the v6 release)*
 
 ---
 
@@ -66,10 +65,11 @@ For access or a walkthrough of the implementation, please get in touch via [Link
 
 V-Profile Matrix works best when combined with the rest of the suite:
 
-- **[V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine)** — multi-timezone session mapping with per-session POC, LVN and VWAP
-- **[V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine)** — anchored VWAP with volume shock detection and live volatility dashboard
+- **[V-Sessions](https://github.com/VTS92/V-Sessions-for-TradingView)** — multi-session mapping with per-session POC, LVN and mitigation tracking
+- **[V-Cumulative Delta](https://github.com/VTS92/V-Cumulative-Delta-for-TradingView)** — cumulative volume delta with order-flow regime detection and VWAP divergence
+- **[V-Profile Delta Range](https://github.com/VTS92/V-Profile-Delta-Range-for-TradingView)** — rolling delta profile with institutional Z-score cluster detection
 
-**How they fit together:** V-Profile Matrix tells you *where* volume concentrated and rates the strength of each imbalance. V-Sessions tells you *when* each market was active and how it distributed volume. V-WAPE tells you *whether price is overextended* from fair value right now.
+**How they fit together:** V-Session tells you *when* each market was active and how it distributed volume. V-Profile Matrix tells you *where* volume concentrated and rates the strength of each imbalance. V-Cumulative Delta tells you *who* is in control of the order flow. V-Profile Range flags institutional-size clusters as they form, independent of session boundaries.
 
 ---
 
@@ -77,7 +77,7 @@ V-Profile Matrix works best when combined with the rest of the suite:
 
 **Vito Santarsiero** — Trading Platform Operations Specialist | CISI IOC Candidate | London, UK
 
-[LinkedIn](https://linkedin.com/in/vito-santarsiero) · [V-Sessions Engine](https://github.com/VTS92/V-Sessions-Engine) · [V-WAPE Engine](https://github.com/VTS92/V-WAPE-Engine)
+[LinkedIn](https://linkedin.com/in/vito-santarsiero) · [V-Sessions](https://github.com/VTS92/V-Sessions-for-TradingView) · [V-Cumulative Delta](https://github.com/VTS92/V-Cumulative-Delta-for-TradingView) · [V-Profile Delta Range](https://github.com/VTS92/V-Profile-Delta-Range-for-TradingView)
 
 ## License
 

@@ -36,7 +36,7 @@ The indicator combines four analytical layers:
 
 ## Screenshots
 
-*(coming soon — being updated for the v6 release)*
+![V-Profile Overview](DAX_2026-08-21_11-33-16.png)
 
 ---
 
